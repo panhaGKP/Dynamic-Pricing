@@ -1,0 +1,4 @@
+.venv/
+.env
+Project_Development/models/
+Project_Development/.env

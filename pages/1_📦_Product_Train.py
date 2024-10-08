@@ -11,6 +11,7 @@ from sklearn.model_selection import GridSearchCV
 from xgboost import XGBRegressor # type: ignore
 from joblib import dump
 
+# covert list to dataframe
 def exec_query(query):
     cs = ctx.cursor()
     try:
@@ -102,11 +103,11 @@ weekly_gross_sales_by_product = exec_query(f"""
     ORDER BY
         WEEK ASC
 """)
-columns = ["DATE", "GROSS_SALES"]
+columns = ["WEEK", "GROSS_SALES"]
 weekly_gross_sales_by_product = convert_list_to_df(weekly_gross_sales_by_product, columns)
 
 # plot the area chart
-st.area_chart(weekly_gross_sales_by_product, x="DATE", y="GROSS_SALES", color=["#00CCDD"])
+st.area_chart(weekly_gross_sales_by_product, x="WEEK", y="GROSS_SALES", color=["#00CCDD"])
 
 # find min and max volumn of select product
 if st.button("Train Model for this Product"):

@@ -1,4 +1,6 @@
 .venv/
+.venv_3_11/
 .env
 Project_Development/models/
 Project_Development/.env
+Project_Development/snowflake_creds.json

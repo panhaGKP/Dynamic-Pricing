@@ -22,7 +22,7 @@ from joblib import dump
 st.set_page_config(page_title="Price Recommendation", page_icon="🏷️")
 
 @st.cache_resource(ttl=3600)
-def init_connection():
+def get_active_session():
     #get account credentials from
     load_dotenv()
     connection_parameters = {
@@ -43,8 +43,7 @@ def convert_list_to_df(data, columns):
 # ============ End of function Definitions =========
 # ============ Main Code ==============
 
-session = init_connection()
-# session = get_active_session()
+session = get_active_session()
 
 st.title('Pricing Recommendation App')
 
@@ -216,17 +215,17 @@ if st.button('Pricing Recommendations'):
 
     
     with col1:
-        st.image('CS 1.png', caption='Customer Segment 1') 
+        st.image('assets/CS 1.png', caption='Customer Segment 1') 
         st.write(f"Price Range: \\${min_price_cs1:.2f} - \\${max_price_cs1:.2f}")
 
     
     with col2:
-        st.image('CS 2.png', caption='Customer Segment 2')
+        st.image('assets/CS 2.png', caption='Customer Segment 2')
         st.write(f"Price Range: \\${min_price_cs2:.2f} - \\${max_price_cs2:.2f}")
 
     
     with col3:
-        st.image('CS 3.png', caption='Product Image 3')
+        st.image('assets/CS 3.png', caption='Product Image 3')
         st.write(f"Price Range: \\${min_price_cs3:.2f} - \\${max_price_cs3:.2f}")
 
     st.markdown('---')
@@ -238,5 +237,3 @@ if st.button('Pricing Recommendations'):
     st.write(f"Expected Volume Sold: {volume} units")
     st.write(f"Start Date: {start_date.strftime('%Y-%m-%d')}")
     st.write(f"End Date: {end_date.strftime('%Y-%m-%d')}")
-
-

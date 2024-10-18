@@ -5,7 +5,6 @@ import numpy as np
 import cachetools
 import json
 
-from snowflake.snowpark import Session
 import snowflake.snowpark.functions as F
 import snowflake.snowpark.types as T
 
@@ -16,9 +15,10 @@ from sklearn.model_selection import GridSearchCV
 from xgboost import XGBRegressor # type: ignore
 from joblib import dump
 from snowflake.snowpark.types import StructType, StructField, IntegerType, FloatType, StringType
-from joblib import dump
+
 
 # from snowflake.snowpark.context import get_active_session
+from snowflake.snowpark import Session
 
 
 st.set_page_config(page_title="Product Training", page_icon="😊")
@@ -185,10 +185,10 @@ product_sku_trained_selected = st.selectbox(
     products_trained  # Add or change the product names as needed
 )
 
-weekly_gross_sales_by_product = session.sql(f"""
+weekly_units_sold_by_product = session.sql(f"""
     SELECT 
         DATE_TRUNC('week', FACT_ORDER_LINE_ITEM_BASE.ORDER_DATE) AS "WEEK",
-        SUM(LU_PRD_PRODUCT_SKU.PRODUCT_SKU_RETAIL_PRICE * FACT_ORDER_LINE_ITEM_BASE.ORDERED_QUANTITY) AS "GROSS_SALES",  
+        SUM(FACT_ORDER_LINE_ITEM_BASE.ORDERED_QUANTITY) AS "UNITS_SOLD",  
     FROM 
         LU_PRD_PRODUCT_SKU
     JOIN 
@@ -199,8 +199,6 @@ weekly_gross_sales_by_product = session.sql(f"""
         FACT_ORDER_LINE_ITEM_BASE 
     ON 
         FACT_ORDER_LINE_ITEM_BASE.PRODUCT_CODE = LU_PRD_PRODUCT.PRODUCT_CODE
-    JOIN 
-        LU_CUS_CUSTOMER 
     WHERE
         LU_PRD_PRODUCT_SKU.PRODUCT_SKU IN  ('{product_sku_trained_selected}')
         AND (YEAR(FACT_ORDER_LINE_ITEM_BASE.ORDER_DATE) BETWEEN 2021 AND 2023)
@@ -209,12 +207,13 @@ weekly_gross_sales_by_product = session.sql(f"""
     ORDER BY
         WEEK ASC
 """).collect()
-columns = ["WEEK", "GROSS_SALES"]
-weekly_gross_sales_by_product = convert_list_to_df(weekly_gross_sales_by_product, columns)
-
+columns = ["WEEK", "UNITS_SOLD"]
+weekly_units_sold_by_product = convert_list_to_df(weekly_units_sold_by_product, columns)
+weekly_units_sold_by_product['WEEK'] = pd.to_datetime(weekly_units_sold_by_product['WEEK'])
+weekly_units_sold_by_product['UNITS_SOLD'] = weekly_units_sold_by_product['UNITS_SOLD'].astype('int')
 #  ====== Data Exploration Part =========
 # plot the area chart
-st.area_chart(weekly_gross_sales_by_product, x="WEEK", y="GROSS_SALES", color=["#00CCDD"])
+st.area_chart(weekly_units_sold_by_product, x="WEEK", y="UNITS_SOLD", color=["#00CCDD"])
 # !will add more visual analysis here
 
 

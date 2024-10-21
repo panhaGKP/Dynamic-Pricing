@@ -2,21 +2,19 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import os
-# import snowflake.connector as sf # type: ignore
-
-# from dotenv import load_dotenv # type: ignore
-# from joblib import load
+import json
 from datetime import datetime, timedelta
-
-#import snowflake model
-from snowflake.snowpark import Session
-import snowflake.snowpark.functions as F
-
 from dotenv import load_dotenv
+
+# Import modules for machine learning
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import GridSearchCV
 from xgboost import XGBRegressor # type: ignore
 from joblib import dump
+
+#import snowflake package
+import snowflake.snowpark.functions as F
+from snowflake.snowpark import Session
 # from snowflake.snowpark.context import get_active_session
 
 st.set_page_config(page_title="Price Recommendation", page_icon="🏷️")
@@ -40,6 +38,26 @@ def get_active_session():
 def convert_list_to_df(data, columns):
     return pd.DataFrame(data, columns=columns)
 
+def get_list_models_path_demand_forecasting(session, product_sku):
+    model_path_query = f"""
+    SELECT
+        MODEL_PATH,
+        CUSTOMER_SEGMENT
+    FROM 
+        FACT_PRODUCT_SKU_CUS_DEMAND_TRAINED 
+    WHERE 
+        PRODUCT_SKU = '{product_sku}' ORDER BY CUSTOMER_SEGMENT
+    """
+
+    # Execute the query and collect the results
+    model_paths_result = session.sql(model_path_query).collect()
+
+    # Extract the model names from the result
+    model_paths = [row['MODEL_PATH'] for row in model_paths_result]
+
+    # Print the list of model names
+    return model_paths
+
 # ============ End of function Definitions =========
 # ============ Main Code ==============
 
@@ -47,12 +65,14 @@ session = get_active_session()
 
 st.title('Pricing Recommendation App')
 
-# read list of products from snowflake LU_PRD_PRODUCT_TRAINED
-product_list = session.sql("""
+# read list of products from snowflake LU_PRD_PRODUCT_SKU_PREDICTED
+product_model_table = "LU_PRD_PRODUCT_SKU_PREDICTED"
+demand_forecasting_model_table = "FACT_PRODUCT_SKU_CUS_DEMAND_TRAINED"
+product_list = session.sql(f"""
     SELECT  
         PRODUCT_SKU
     FROM 
-        LU_PRD_PRODUCT_TRAINED
+        {product_model_table}
     ORDER BY 
         DATE_MODIFIED DESC
 """).collect()
@@ -68,12 +88,14 @@ product = st.selectbox(
 selected_product_retail_price = session.sql(f"""
     SELECT 
         LU_PRD_PRODUCT_SKU.PRODUCT_SKU_RETAIL_PRICE 
-    FROM LU_PRD_PRODUCT_TRAINED 
-        JOIN LU_PRD_PRODUCT_SKU 
+    FROM 
+        {product_model_table}                                    
+    JOIN 
+        LU_PRD_PRODUCT_SKU 
     ON 
-        LU_PRD_PRODUCT_SKU.PRODUCT_SKU = LU_PRD_PRODUCT_TRAINED.PRODUCT_SKU 
+        LU_PRD_PRODUCT_SKU.PRODUCT_SKU = {product_model_table}.PRODUCT_SKU 
     WHERE 
-        LU_PRD_PRODUCT_TRAINED.PRODUCT_SKU = '{product}'
+        {product_model_table}.PRODUCT_SKU = '{product}'
 """).collect()
 #print(type(selected_product_retail_price))
 #print(selected_product_retail_price)
@@ -82,24 +104,26 @@ product_retail_price_display = selected_product_retail_price[0]['PRODUCT_SKU_RET
 st.caption(f"{product} base price: \\${product_retail_price_display:.2f}")
 
 # find min and max volumn of select product
-min_max_volume_retail_price_latest_sales = session.sql(f"""
+product_info = session.sql(f"""
     SELECT 
-        LU_PRD_PRODUCT_TRAINED.MIN_VOLUMN_SOLD AS "MIN_VOLUMN_SOLD", 
-        LU_PRD_PRODUCT_TRAINED.MAX_VOLUMN_SOLD AS "MAX_VOLUMN_SOLD",
+        {product_model_table}.MIN_VOLUMN_SOLD AS "MIN_VOLUMN_SOLD", 
+        {product_model_table}.MAX_VOLUMN_SOLD AS "MAX_VOLUMN_SOLD",
+        {product_model_table}.MODEL_PATH AS "MODEL_PATH",
+        {product_model_table}.MODEL_NAME AS "MODEL_NAME",
         LU_PRD_PRODUCT_SKU.PRODUCT_SKU_RETAIL_PRICE "RETAIL_PRICE",
         LU_PRD_PRODUCT_SKU.LATEST_DATE AS "LATEST_DATE_SOLD"
     FROM 
-        LU_PRD_PRODUCT_TRAINED 
+        {product_model_table} 
     JOIN 
         LU_PRD_PRODUCT_SKU 
     ON 
-        LU_PRD_PRODUCT_SKU.PRODUCT_SKU = LU_PRD_PRODUCT_TRAINED.PRODUCT_SKU 
+        LU_PRD_PRODUCT_SKU.PRODUCT_SKU = {product_model_table}.PRODUCT_SKU 
     WHERE 
-        LU_PRD_PRODUCT_TRAINED.PRODUCT_SKU = '{product}'
+        {product_model_table}.PRODUCT_SKU = '{product}'
 """).collect()
 
-lastest_sold = min_max_volume_retail_price_latest_sales[0]['LATEST_DATE_SOLD'] + timedelta(days=1)
-after_lastest_sold = min_max_volume_retail_price_latest_sales[0]['LATEST_DATE_SOLD'] + timedelta(days=7)
+lastest_sold = product_info[0]['LATEST_DATE_SOLD'] + timedelta(days=1)
+after_lastest_sold = product_info[0]['LATEST_DATE_SOLD'] + timedelta(days=7)
 
 start_date, end_date = st.date_input(
     "Select Date Range for Forecast",
@@ -109,9 +133,9 @@ start_date, end_date = st.date_input(
 
 num_days_selected = (end_date - start_date).days + 1
 # print(f"Number of days selected: {num_days_selected}")
-min_volume = max(min_max_volume_retail_price_latest_sales[0]['MIN_VOLUMN_SOLD'], num_days_selected)  # Ensure minimum volume is at least number of days
-max_volume = min_max_volume_retail_price_latest_sales[0]['MAX_VOLUMN_SOLD']
-retail_price = min_max_volume_retail_price_latest_sales[0]['RETAIL_PRICE']
+min_volume = max(product_info[0]['MIN_VOLUMN_SOLD'], num_days_selected)  # Ensure minimum volume is at least number of days
+max_volume = product_info[0]['MAX_VOLUMN_SOLD']
+retail_price = product_info[0]['RETAIL_PRICE']
 
 volume = st.number_input(
     f"Enter the Expected Volume Sold (Recommended Range: {min_volume} - {max_volume*num_days_selected})",  # Label for the input
@@ -120,45 +144,70 @@ volume = st.number_input(
     step=1 # Step for incrementing/decrementing
 )
 
-# ======Distribute the volume across the selected days=======
-volume_per_day = volume // num_days_selected  # Base volume per day
-remaining_volume = volume % num_days_selected  # Remaining volume to distribute
-# Create a list to store the volume distribution
-volume_distribution = [volume_per_day] * num_days_selected
-
-# Add bias to the first `remaining_volume` days
-for i in range(remaining_volume):
-    volume_distribution[i] += 1  # Distribute the extra volume to the earlier days
-
-list_of_dates = [start_date + timedelta(days=i) for i in range(num_days_selected)]
-# Three clusters of customers (But there will be more)
-cluster_members = [0,1,2]
-# Create a list of cluster samples for each day
+# ======Distribute the volume across the selected days by using Weight from ARIMA model =======
+# last_date = product_info[0]['LATEST_DATE_SOLD']
+# print(f"Last Date Sold: {last_date}")
+# regular_date = datetime.fromordinal(last_date)
+cluster_members = [1,2, 3, 4, 5, 6, 7, 8, 9]
+    # Create a list of cluster samples for each day
 cluster_samples = [[clusters]*num_days_selected for clusters in cluster_members]
 
 #===Debugging===
+# print("forecast_df_for_each_segment")
+# print(forecast_df_for_each_segment)
 # print("Volumn Distribution")
 # print(volume_distribution)
 # print("Cluster Samples")
-# print(cluster_samples)
+print(cluster_samples)
 
 # print(f"Volume Distribution: {volume_distribution}")
 # Button to Show Images and Prices
 if st.button('Pricing Recommendations'):
     st.markdown('---')
     st.subheader('Product Pricing Recommended Range')
+    forecast_index = pd.date_range(start=lastest_sold, periods=num_days_selected, freq='D')
+    # print(forecast_index)
+    model_demand_forecasting_files = get_list_models_path_demand_forecasting(session, product)
+    demand_predict_result = {}
+    for segment, model_file in enumerate(model_demand_forecasting_files):
+        file_name = os.path.basename(model_file)
+        result = session.sql(f"""
+            SELECT udf_demand_forecast_prediction('{file_name}', {num_days_selected}) as DEMAND_FORECAST
+        """).collect()
+        json_result = json.loads(result[0]['DEMAND_FORECAST'])
+        json_result_dict = json.loads(json_result)
+        demand_predict_result[segment] = json_result_dict
+        print(f"Segment {segment+1} Forecast: {json_result_dict['forecast']}")
 
+    forecast_df_for_each_segment = {}
+    for segment, result in demand_predict_result.items():
+        # Calculate the total units sold in the forecast
+        forecast_df_for_each_segment[segment] = pd.DataFrame(result['forecast'], index=forecast_index, columns=['UNITS_SOLD'])
+        total_units_sold = forecast_df_for_each_segment[segment]['UNITS_SOLD'].sum()
+        forecast_df_for_each_segment[segment]['WEIGHT_PERCENTAGE'] = (forecast_df_for_each_segment[segment]['UNITS_SOLD'] / total_units_sold) * 100
+
+    volume_distribution_for_each_segment = {}
+    for segment, df in forecast_df_for_each_segment.items():
+        volume_distribution_for_each_segment[segment] = ((df['WEIGHT_PERCENTAGE']/100) * volume).round().astype(int)
+
+    list_of_dates = [start_date + timedelta(days=i) for i in range(num_days_selected)]
+    # Three clusters of customers (But there will be more)
     
+
 
     each_cluster_average_discount_rate = []
     for cluster_number in cluster_members:
+        print(f"Cluster {cluster_number}")
+        predict_discount_rate_model_file = os.path.basename(product_info[0]['MODEL_PATH'])
+        predict_discount_rate_model_name = product_info[0]['MODEL_NAME']
+        volume_sold_by_date = (forecast_df_for_each_segment[cluster_number-1]['WEIGHT_PERCENTAGE'] / 100) * volume
         sample_data = {
-            'UNIT_SOLD': volume_distribution,
+            #'UNITS_SOLD': volume_distribution,
+            'UNITS_SOLD': volume_sold_by_date.to_list(),
             'DATE': list_of_dates,
             #'CLUSTER': [1,1,1,1,1,1,1,1],
-            'CLUSTER': cluster_samples[cluster_number],
+            'CUSTOMER_SEGMENT': cluster_samples[cluster_number],
         }
-
         df_sample = pd.DataFrame(sample_data)
 
         # ================= Data Preprocessing Steps =====================
@@ -169,7 +218,7 @@ if st.button('Pricing Recommendations'):
 
         # Predict using the trained model
         # Reorder the columns of df_sample
-        df_sample = df_sample[['DATE_ORDINAL', 'UNIT_SOLD', 'CLUSTER']]
+        df_sample = df_sample[['DATE_ORDINAL', 'UNITS_SOLD', 'CUSTOMER_SEGMENT']]
         # print(df_sample)
         
         snowpark_df_sample = session.create_dataframe(df_sample)
@@ -177,13 +226,13 @@ if st.button('Pricing Recommendations'):
         # ================= Predict the Average Discount Rate from UDFs snowflake===================
         predictions_set = snowpark_df_sample.select(
             F.col("DATE_ORDINAL"),
-            F.col("UNIT_SOLD"),
-            F.col("CLUSTER"),
-            F.call_udf("udf_avg_discount_rate_prediction", 
+            F.col("UNITS_SOLD"),
+            F.col("CUSTOMER_SEGMENT"),
+            F.call_udf("udf_avg_discount_rate_prediction_v2", 
                 snowpark_df_sample['DATE_ORDINAL'],
-                snowpark_df_sample['UNIT_SOLD'], 
-                snowpark_df_sample['CLUSTER'], 
-                "B33_S3_xgb_model.sav").alias('PREDICTED_AVG_DISCOUNT_RATE')
+                snowpark_df_sample['UNITS_SOLD'], 
+                snowpark_df_sample['CUSTOMER_SEGMENT'], 
+                f"{predict_discount_rate_model_file}").alias('PREDICTED_AVG_DISCOUNT_RATE')
         ).collect()
         # print("predictions_set")
         # print(predictions_set)

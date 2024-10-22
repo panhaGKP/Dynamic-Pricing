@@ -20,6 +20,7 @@ from snowflake.snowpark import Session
 
 st.set_page_config(page_title="Price Recommendation", page_icon="🏷️")
 
+# ============ Function Definitions =========
 @st.cache_resource(ttl=3600)
 def get_active_session():
     #get account credentials from
